@@ -129,7 +129,7 @@ jobs:
       shell: bash
     - name: test
       shell: bash
-      run: . /etc/profile && make -C t -e || ci/print-test-failures-github.sh
+      run: . /etc/profile && make -C t -e && if test 0 != "${{matrix.nr}}" || make -C contrib/subtree test; fi || ci/print-test-failures-github.sh
     - name: Upload failed tests' directories
       if: failure() && env.FAILED_TEST_ARTIFACTS != ''
       uses: actions/upload-artifact@v2
@@ -143,6 +143,9 @@ jobs:
     needs: ci-config
     if: needs.ci-config.outputs.enabled == 'yes'
     runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [x64, arm64]
     steps:
     - uses: actions/checkout@v2
     - uses: git-for-windows/setup-git-for-windows-sdk@v1
@@ -152,28 +155,24 @@ jobs:
         repository: 'microsoft/vcpkg'
         path: 'compat/vcbuild/vcpkg'
     - name: download vcpkg artifacts
-      shell: powershell
-      run: |
-        $urlbase = "https://dev.azure.com/git/git/_apis/build/builds"
-        $id = ((Invoke-WebRequest -UseBasicParsing "${urlbase}?definitions=9&statusFilter=completed&resultFilter=succeeded&`$top=1").content | ConvertFrom-JSON).value[0].id
-        $downloadUrl = ((Invoke-WebRequest -UseBasicParsing "${urlbase}/$id/artifacts").content | ConvertFrom-JSON).value[0].resource.downloadUrl
-        (New-Object Net.WebClient).DownloadFile($downloadUrl, "compat.zip")
-        Expand-Archive compat.zip -DestinationPath . -Force
-        Remove-Item compat.zip
+      uses: git-for-windows/get-azure-pipelines-artifact@v0
+      with:
+        repository: git/git
+        definitionId: 9
     - name: add msbuild to PATH
       uses: microsoft/setup-msbuild@v1
     - name: copy dlls to root
       shell: cmd
-      run: compat\vcbuild\vcpkg_copy_dlls.bat release
+      run: compat\vcbuild\vcpkg_copy_dlls.bat release ${{ matrix.arch }}-windows
     - run: ci/lib.sh --build
       shell: bash
     - name: generate Visual Studio solution
       shell: bash
       run: |
-        cmake `pwd`/contrib/buildsystems/ -DCMAKE_PREFIX_PATH=`pwd`/compat/vcbuild/vcpkg/installed/x64-windows \
-        -DNO_GETTEXT=YesPlease -DPERL_TESTS=OFF -DPYTHON_TESTS=OFF -DCURL_NO_CURL_CMAKE=ON
+        cmake `pwd`/contrib/buildsystems/ -DCMAKE_PREFIX_PATH=`pwd`/compat/vcbuild/vcpkg/installed/${{ matrix.arch }}-windows \
+        -DNO_GETTEXT=YesPlease -DPERL_TESTS=OFF -DPYTHON_TESTS=OFF -DCURL_NO_CURL_CMAKE=ON -DCMAKE_GENERATOR_PLATFORM=${{ matrix.arch }} -DVCPKG_ARCH=${{ matrix.arch }}-windows -DHOST_CPU=${{ matrix.arch }}
     - name: MSBuild
-      run: msbuild git.sln -property:Configuration=Release -property:Platform=x64 -maxCpuCount:4 -property:PlatformToolset=v142
+      run: msbuild git.sln -property:Configuration=Release -property:Platform=${{ matrix.arch }} -maxCpuCount:4 -property:PlatformToolset=v142
     - name: bundle artifact tar
       shell: bash
       env:
@@ -185,7 +184,7 @@ jobs:
     - name: upload tracked files and build artifacts
       uses: actions/upload-artifact@v2
       with:
-        name: vs-artifacts
+        name: vs-artifacts-${{ matrix.arch }}
         path: ${{env.ARTIFACTS_DIRECTORY}}
   vs-test:
     name: win+VS test
@@ -202,7 +201,7 @@ jobs:
     - name: download tracked files and build artifacts
       uses: actions/download-artifact@v2
       with:
-        name: vs-artifacts
+        name: vs-artifacts-x64
         path: ${{github.workspace}}
     - name: extract tracked files and build artifacts
       shell: bash
@@ -214,7 +213,7 @@ jobs:
       shell: bash
     - name: test
       shell: bash
-      run: . /etc/profile && make -C t -e || ci/print-test-failures-github.sh
+      run: . /etc/profile && make -C t -e && if test 0 != "${{matrix.nr}}" || make -C contrib/subtree test; fi || ci/print-test-failures-github.sh
     - name: Upload failed tests' directories
       if: failure() && env.FAILED_TEST_ARTIFACTS != ''
       uses: actions/upload-artifact@v2
@@ -257,7 +256,7 @@ jobs:
     - run: ci/lib.sh --build
     - run: make
     - run: ci/lib.sh --test
-    - run: make test || ci/print-test-failures-github.sh
+    - run: make test && make -C contrib/subtree test || ci/print-test-failures-github.sh
       if: success()
     - name: Upload failed tests' directories
       if: failure() && env.FAILED_TEST_ARTIFACTS != ''
@@ -291,7 +290,7 @@ jobs:
     - run: ci/lib.sh --build
     - run: make
     - run: ci/lib.sh --test
-    - run: make test || ci/print-test-failures-github.sh
+    - run: make test && make -C contrib/subtree test || ci/print-test-failures-github.sh
       if: success() && matrix.vector.skip-tests != 'no'
     - name: Upload failed tests' directories
       if: failure() && env.FAILED_TEST_ARTIFACTS != ''
